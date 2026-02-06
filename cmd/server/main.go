@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/fleveque/logo-service/internal/config"
 	"github.com/fleveque/logo-service/internal/server"
+	"github.com/fleveque/logo-service/internal/storage"
 )
 
 func main() {
@@ -53,8 +55,32 @@ func run() error {
 	// because Sync commonly fails on stdout/stderr (not a real problem).
 	defer func() { _ = logger.Sync() }()
 
+	// Initialize storage: SQLite database + filesystem for logo PNGs.
+	// Ensure the parent directory for the database file exists.
+	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DatabasePath), 0755); err != nil {
+		return fmt.Errorf("creating database directory: %w", err)
+	}
+	db, err := storage.NewDatabase(cfg.Storage.DatabasePath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	fs, err := storage.NewFileSystem(cfg.Storage.LogoDir)
+	if err != nil {
+		return fmt.Errorf("creating filesystem storage: %w", err)
+	}
+
+	logoRepo := storage.NewLogoRepository(db)
+	llmCallRepo := storage.NewLLMCallRepository(db)
+
+	logger.Info("storage initialized",
+		zap.String("database", cfg.Storage.DatabasePath),
+		zap.String("logo_dir", cfg.Storage.LogoDir),
+	)
+
 	// Create and start the HTTP server
-	srv := server.New(cfg, logger)
+	srv := server.New(cfg, logger, logoRepo, llmCallRepo, fs)
 
 	// Graceful shutdown: listen for SIGINT (Ctrl+C) or SIGTERM (docker stop).
 	// Channels are Go's primary concurrency primitive — goroutines communicate

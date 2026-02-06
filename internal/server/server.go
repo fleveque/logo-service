@@ -10,20 +10,31 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fleveque/logo-service/internal/config"
+	"github.com/fleveque/logo-service/internal/storage"
 )
+
+// Deps groups all dependencies the server needs. Using a struct instead of
+// many function parameters keeps the constructor clean as dependencies grow.
+// This is called the "functional options" alternative — a simple deps struct.
+type Deps struct {
+	LogoRepo    storage.LogoRepository
+	LLMCallRepo storage.LLMCallRepository
+	FileSystem  *storage.FileSystem
+}
 
 // Server wraps the HTTP server and its dependencies.
 // In Go, you typically compose a struct with all the pieces your server needs,
 // then wire them together in the constructor (New function).
 type Server struct {
 	cfg    *config.Config
+	deps   Deps
 	router *gin.Engine
 	logger *zap.Logger
 	http   *http.Server
 }
 
 // New creates and configures a new Server.
-func New(cfg *config.Config, logger *zap.Logger) *Server {
+func New(cfg *config.Config, logger *zap.Logger, logoRepo storage.LogoRepository, llmCallRepo storage.LLMCallRepository, fs *storage.FileSystem) *Server {
 	// Set Gin mode based on log level
 	if cfg.Log.Level == "debug" {
 		gin.SetMode(gin.DebugMode)
@@ -40,7 +51,12 @@ func New(cfg *config.Config, logger *zap.Logger) *Server {
 	RegisterRoutes(router)
 
 	s := &Server{
-		cfg:    cfg,
+		cfg: cfg,
+		deps: Deps{
+			LogoRepo:    logoRepo,
+			LLMCallRepo: llmCallRepo,
+			FileSystem:  fs,
+		},
 		router: router,
 		logger: logger,
 		http: &http.Server{
