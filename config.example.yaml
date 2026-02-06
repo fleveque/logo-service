@@ -1,0 +1,42 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+storage:
+  database_path: "./storage/logo-service.db"
+  logo_dir: "./storage/logos"
+
+auth:
+  api_keys:
+    - "your-api-key-here"
+  admin_keys:
+    - "your-admin-key-here"
+
+cors:
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:3036"
+    - "https://quantic.es"
+    - "https://quantic.cat"
+
+llm:
+  primary_provider: "anthropic"  # or "openai"
+  anthropic:
+    api_key: ""  # or set LOGO_LLM_ANTHROPIC_API_KEY env var
+    model: "claude-sonnet-4-5-20250929"
+  openai:
+    api_key: ""  # or set LOGO_LLM_OPENAI_API_KEY env var
+    model: "gpt-4o"
+  rate_per_minute: 10
+
+github:
+  repos:
+    - "davidepalazzo/ticker-logos"
+    - "nvstly/icons"
+
+rate_limit:
+  requests_per_second: 10
+  burst: 20
+
+log:
+  level: "info"  # "debug" for development
