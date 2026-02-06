@@ -77,3 +77,52 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - WAL mode (`_journal_mode=WAL`): allows concurrent reads while writing
 - `_busy_timeout=5000`: wait up to 5s instead of failing on lock contention
 - `SetMaxOpenConns(1)`: SQLite performs best with a single writer
+
+---
+
+## Phase 3: Image Processing
+
+**CGO and C bindings**
+- `bimg` wraps libvips via CGO — Go's mechanism for calling C code
+- Trade-off: amazing performance (libvips is one of the fastest image libraries) but requires a C library at build time
+- This is why CI needs `apt-get install libvips-dev` and the Dockerfile needs a multi-stage build
+- CGO compiles slower than pure Go — that's why we increased the lint timeout to 5 minutes
+
+**Options structs (alternative to builders)**
+- Go doesn't use builder patterns much. Instead, you pass a struct with optional fields:
+  ```go
+  img.Process(bimg.Options{
+      Width:  64,
+      Height: 64,
+      Type:   bimg.PNG,
+      Embed:  true,
+  })
+  ```
+- Only set the fields you need — zero values are meaningful defaults
+
+**Table-driven tests**
+- The idiomatic way to test multiple inputs in Go: define test cases as a slice of structs, loop with `t.Run()`
+  ```go
+  tests := []struct {
+      name    string
+      input   string
+      want    int
+      wantErr bool
+  }{
+      {"valid", "ff0000", 255, false},
+      {"invalid", "xyz", 0, true},
+  }
+  for _, tt := range tests {
+      t.Run(tt.name, func(t *testing.T) { ... })
+  }
+  ```
+- Each `t.Run()` creates a named subtest — shows up individually in test output and can be run in isolation
+
+**Standard library image support**
+- Go's `image` and `image/png` packages can create and encode images without any dependencies
+- Useful for generating test fixtures: `image.NewNRGBA()` creates an in-memory image you can manipulate pixel by pixel
+- `bytes.Buffer` implements `io.Writer` — you can encode a PNG directly into a byte buffer
+
+**`fmt.Sscanf`**
+- Like C's `scanf` — parses formatted strings: `fmt.Sscanf("ff0000", "%02x%02x%02x", &r, &g, &b)`
+- Go inherited several C-isms: `fmt.Sprintf`, `fmt.Fprintf`, `fmt.Sscanf` all follow C format strings
