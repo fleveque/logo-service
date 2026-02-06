@@ -49,7 +49,9 @@ func run() error {
 	}
 	// defer runs when the enclosing function returns — like Ruby's ensure or
 	// a finally block. Great for cleanup.
-	defer logger.Sync()
+	// Sync flushes buffered log entries. We intentionally ignore the error here
+	// because Sync commonly fails on stdout/stderr (not a real problem).
+	defer func() { _ = logger.Sync() }()
 
 	// Create and start the HTTP server
 	srv := server.New(cfg, logger)
