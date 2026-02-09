@@ -1,0 +1,54 @@
+# Kamal deployment configuration for logo-service.
+# Deploys to the same Hetzner server as dividend-portfolio.
+#
+# Kamal note: Kamal v2 manages Docker containers on remote servers via SSH.
+# It handles zero-downtime deploys, SSL, and multi-app routing on a single server.
+service: logo-service
+
+# Container image — hosted on GitHub Container Registry (same as dividend-portfolio).
+image: fleveque/logo-service
+
+# Deploy to the same server as dividend-portfolio.
+servers:
+  web:
+    - 46.224.239.228
+
+# Kamal proxy handles SSL termination and routes by hostname.
+# This service gets its own subdomain.
+proxy:
+  ssl: true
+  host: logos.quantic.es
+  app_port: 8080
+  healthcheck:
+    path: /healthz
+    interval: 30
+
+# GitHub Container Registry credentials.
+registry:
+  server: ghcr.io
+  username: fleveque
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+# Environment variables injected into the container.
+env:
+  secret:
+    - LOGO_AUTH_API_KEYS
+    - LOGO_AUTH_ADMIN_KEYS
+    - LOGO_LLM_ANTHROPIC_API_KEY
+    - LOGO_LLM_OPENAI_API_KEY
+  clear:
+    LOGO_SERVER_HOST: "0.0.0.0"
+    LOGO_SERVER_PORT: "8080"
+    LOGO_STORAGE_DATABASE_PATH: "/app/storage/logo-service.db"
+    LOGO_STORAGE_LOGO_DIR: "/app/storage/logos"
+    LOGO_LOG_LEVEL: "info"
+
+# Persistent storage for SQLite database and cached logo PNGs.
+# Same pattern as dividend-portfolio's storage volume.
+volumes:
+  - "logo_service_storage:/app/storage"
+
+# ARM64 build — same architecture as the Hetzner server.
+builder:
+  arch: arm64

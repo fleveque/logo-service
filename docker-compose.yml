@@ -1,0 +1,29 @@
+# Local development docker-compose.
+# Usage: docker compose up -d
+#
+# This sets up the logo-service with persistent storage for logos and the SQLite database.
+# For local dev, you can also just run `make run` if you have Go and libvips installed.
+services:
+  logo-service:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # Config via environment variables (LOGO_ prefix).
+      # These override config.yaml defaults.
+      LOGO_SERVER_HOST: "0.0.0.0"
+      LOGO_SERVER_PORT: "8080"
+      LOGO_STORAGE_DATABASE_PATH: "/app/storage/logo-service.db"
+      LOGO_STORAGE_LOGO_DIR: "/app/storage/logos"
+      LOGO_LOG_LEVEL: "debug"
+      # LLM API keys — set these in your shell or .env file.
+      # Without them, the service still works but only serves GitHub-imported logos.
+      LOGO_LLM_ANTHROPIC_API_KEY: "${LOGO_LLM_ANTHROPIC_API_KEY:-}"
+      LOGO_LLM_OPENAI_API_KEY: "${LOGO_LLM_OPENAI_API_KEY:-}"
+    volumes:
+      # Persist storage across container restarts
+      - logo_data:/app/storage
+    restart: unless-stopped
+
+volumes:
+  logo_data:
