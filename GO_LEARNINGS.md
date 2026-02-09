@@ -289,3 +289,41 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - `buildLLMProvider` is extracted as a helper function to keep `run()` clean
 - Environment variable fallback: check config first (`cfg.LLM.Anthropic.APIKey`), then env (`LOGO_LLM_ANTHROPIC_API_KEY`)
 - `switch` on provider name with `default` case for unknown providers — defensive coding
+
+---
+
+## Phase 8: Docker & Kamal Deployment
+
+**Multi-stage Docker builds**
+- Stage 1 (`golang:1.24-alpine`): build with all dev tools (gcc, musl-dev, vips-dev)
+- Stage 2 (`alpine:3.21`): runtime with only shared libraries (vips, ca-certificates)
+- Result: 134MB image vs ~415MB if single-stage — a 3x reduction
+- `COPY --from=builder /bin/logo-service /bin/logo-service` pulls just the binary from stage 1
+
+**CGO in Docker**
+- `CGO_ENABLED=1` is required for go-sqlite3 and bimg (both wrap C libraries)
+- Alpine uses musl libc (not glibc), so `musl-dev` is needed alongside `gcc`
+- The binary links against musl — it must run on a musl-based image (alpine), not glibc (debian)
+- `-ldflags="-s -w"` strips debug symbols and DWARF info, shrinking the binary ~30%
+
+**Docker layer caching**
+- `COPY go.mod go.sum ./` + `RUN go mod download` is a separate layer from `COPY . .`
+- Dependencies only re-download when go.mod/go.sum change, not on every code change
+- This makes rebuilds much faster during development
+
+**Non-root containers**
+- `addgroup -S app && adduser -S -G app app` creates a system user (no password, no home dir)
+- `USER app` switches to non-root before ENTRYPOINT — defense in depth
+- Storage dirs must be created and chowned *before* switching to the app user
+
+**Viper and environment variable slices**
+- Viper can't auto-parse `LOGO_AUTH_API_KEYS="key1,key2"` into `[]string`
+- Solution: post-processing with `os.Getenv` + `strings.Split` after Viper unmarshal
+- This is a well-known Viper limitation — env vars are always strings, slices need manual handling
+
+**Kamal deployment**
+- Kamal v2 manages Docker deployments via SSH to remote servers
+- `proxy.host` routes traffic by hostname (logos.quantic.es) — multiple apps share one server
+- `volumes` persist data across deploys — critical for SQLite DB and cached logos
+- `.kamal/secrets` pulls from env vars on the deploy machine — never hardcoded
+- `builder.arch: arm64` cross-compiles for the Hetzner ARM64 server

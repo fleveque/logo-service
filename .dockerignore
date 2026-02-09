@@ -1,0 +1,27 @@
+# Build artifacts
+bin/
+
+# Runtime storage (not part of the image)
+storage/
+
+# Config with secrets
+config.yaml
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# Docker/Kamal
+.kamal/
+docker-compose.yml
+
+# Docs
+*.md
+!GO_LEARNINGS.md
+
+# CI
+.github/

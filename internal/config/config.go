@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -127,7 +128,35 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshaling config: %w", err)
 	}
 
+	// Viper can't auto-split comma-separated env vars into []string slices.
+	// For Docker/Kamal deployments, we want: LOGO_AUTH_API_KEYS="key1,key2"
+	// So we check if the env var is set and split it manually.
+	parseCommaSeparatedEnv(&cfg.Auth.APIKeys, "LOGO_AUTH_API_KEYS")
+	parseCommaSeparatedEnv(&cfg.Auth.AdminKeys, "LOGO_AUTH_ADMIN_KEYS")
+	parseCommaSeparatedEnv(&cfg.CORS.AllowedOrigins, "LOGO_CORS_ALLOWED_ORIGINS")
+
 	return &cfg, nil
+}
+
+// parseCommaSeparatedEnv checks if an env var is set and splits it into a string slice.
+// This fills a gap in Viper: env vars are strings, but config fields can be slices.
+// If the env var is set, it replaces whatever the YAML/default provided.
+func parseCommaSeparatedEnv(target *[]string, envKey string) {
+	val := os.Getenv(envKey)
+	if val == "" {
+		return
+	}
+	parts := strings.Split(val, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) > 0 {
+		*target = result
+	}
 }
 
 // Address returns the listen address string like "0.0.0.0:8080".
