@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
@@ -10,30 +9,29 @@ import (
 
 	"github.com/fleveque/logo-service/internal/model"
 	"github.com/fleveque/logo-service/internal/service"
-	"github.com/fleveque/logo-service/internal/storage"
 )
 
 // LogoHandler handles requests for logo images.
+// It delegates to LogoService which implements the full 3-layer pipeline:
+// cache → GitHub → LLM.
 type LogoHandler struct {
-	logoRepo storage.LogoRepository
-	fs       *storage.FileSystem
-	logger   *zap.Logger
+	logoService *service.LogoService
+	logger      *zap.Logger
 }
 
-// NewLogoHandler creates a new LogoHandler with its dependencies.
-func NewLogoHandler(logoRepo storage.LogoRepository, fs *storage.FileSystem, logger *zap.Logger) *LogoHandler {
+// NewLogoHandler creates a new LogoHandler with the logo service.
+func NewLogoHandler(logoService *service.LogoService, logger *zap.Logger) *LogoHandler {
 	return &LogoHandler{
-		logoRepo: logoRepo,
-		fs:       fs,
-		logger:   logger,
+		logoService: logoService,
+		logger:      logger,
 	}
 }
 
 // GetLogo serves a logo image for the given stock symbol.
 // Route: GET /api/v1/logos/:symbol?size=m&bg=ffffff
 //
-// Gin extracts URL params with c.Param() and query params with c.DefaultQuery().
-// The response is raw PNG bytes with appropriate cache headers.
+// If the logo isn't cached, the service transparently acquires it from
+// GitHub repos or via LLM web search, processes it, and caches it.
 func (h *LogoHandler) GetLogo(c *gin.Context) {
 	symbol := strings.ToUpper(c.Param("symbol"))
 
@@ -47,40 +45,15 @@ func (h *LogoHandler) GetLogo(c *gin.Context) {
 	}
 	size := model.LogoSize(sizeStr)
 
-	// Check if logo exists in database
-	logo, err := h.logoRepo.GetBySymbol(c.Request.Context(), symbol)
+	// GetLogo handles the full pipeline: cache → GitHub → LLM → process
+	data, err := h.logoService.GetLogo(c.Request.Context(), symbol, size)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "logo not found",
-			})
-			return
-		}
-		h.logger.Error("database error", zap.String("symbol", symbol), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "internal error",
-		})
-		return
-	}
-
-	// Check if the requested size is available
-	if !logo.HasSize(size) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "logo size not available",
-		})
-		return
-	}
-
-	// Read the PNG from disk
-	data, err := h.fs.Read(symbol, size)
-	if err != nil {
-		h.logger.Error("reading logo file",
+		h.logger.Warn("logo not found",
 			zap.String("symbol", symbol),
-			zap.String("size", string(size)),
 			zap.Error(err),
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "internal error",
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "logo not found",
 		})
 		return
 	}

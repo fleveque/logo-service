@@ -23,7 +23,9 @@ type Deps struct {
 	LLMCallRepo    storage.LLMCallRepository
 	FileSystem     *storage.FileSystem
 	GitHubProvider *provider.GitHubProvider
+	LLMProvider    *provider.LLMProvider // nil if no LLM keys configured
 	ImageProcessor *service.ImageProcessor
+	LogoService    *service.LogoService
 }
 
 // Server wraps the HTTP server and its dependencies.
@@ -38,7 +40,7 @@ type Server struct {
 }
 
 // New creates and configures a new Server.
-func New(cfg *config.Config, logger *zap.Logger, logoRepo storage.LogoRepository, llmCallRepo storage.LLMCallRepository, fs *storage.FileSystem, ghProvider *provider.GitHubProvider, processor *service.ImageProcessor) *Server {
+func New(cfg *config.Config, logger *zap.Logger, deps Deps) *Server {
 	// Set Gin mode based on log level
 	if cfg.Log.Level == "debug" {
 		gin.SetMode(gin.DebugMode)
@@ -51,20 +53,12 @@ func New(cfg *config.Config, logger *zap.Logger, logoRepo storage.LogoRepository
 	// Recovery middleware catches panics and returns 500 instead of crashing.
 	router.Use(gin.Recovery())
 
-	deps := Deps{
-		LogoRepo:       logoRepo,
-		LLMCallRepo:    llmCallRepo,
-		FileSystem:     fs,
-		GitHubProvider: ghProvider,
-		ImageProcessor: processor,
-	}
-
 	// Register routes with config, deps, and logger
 	RegisterRoutes(router, cfg, deps, logger)
 
 	s := &Server{
-		cfg:  cfg,
-		deps: deps,
+		cfg:    cfg,
+		deps:   deps,
 		router: router,
 		logger: logger,
 		http: &http.Server{

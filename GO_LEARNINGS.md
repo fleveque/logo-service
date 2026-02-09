@@ -252,3 +252,40 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - `grep -r "ToolUnionParam" ~/go/pkg/mod/github.com/anthropics/...` reveals actual struct fields
 - Module cache path uses `@version` suffix: `anthropic-sdk-go@v1.22.0/`
 - Always check the actual Go source, not just API docs — Go SDKs often differ from Python/JS equivalents
+
+---
+
+## Phase 7: Service Orchestration
+
+**Service layer pattern**
+- In Go, a "service" is a struct that orchestrates business logic across multiple lower-level components
+- `LogoService` composes: `LogoRepository` (DB), `FileSystem` (disk), `ImageProcessor`, `GitHubProvider`, `LLMProvider`
+- Constructor takes all dependencies explicitly — no DI framework, no global state
+- `nil` is a valid value for optional dependencies: `if s.llmProvider != nil { ... }` gracefully skips LLM
+
+**Deps struct for dependency wiring**
+- When a constructor has many parameters, group them into a `Deps` struct
+- `server.New(cfg, logger, deps)` is cleaner than passing 7+ individual parameters
+- The Deps struct grows with the project — adding a new dependency is adding one field, not changing every call site
+
+**Layered acquisition pattern**
+- `GetLogo` implements: cache (fast, free) → GitHub (fast, free) → LLM (slow, paid)
+- Each layer returns early on success — later layers only run on cache misses
+- This is a common Go pattern: try cheap operations first, escalate to expensive ones
+
+**Shared logic via exported methods**
+- `processAndStore` is the internal method that creates DB records, resizes images, marks status
+- `ProcessAndStore` (exported) lets the admin handler reuse the same pipeline during bulk imports
+- This DRYs up the code — both on-demand requests and bulk imports use the same processing path
+- In Go, exported (uppercase) vs unexported (lowercase) controls visibility at the package level
+
+**Upsert pattern with sentinel errors**
+- Check if record exists with `GetBySymbol`, handle `ErrNotFound` to decide create vs skip
+- `errors.Is(err, storage.ErrNotFound)` checks the error chain — works even through `fmt.Errorf("...: %w", err)` wrapping
+- Return `nil` early for "already processed" — idempotent by design
+
+**Manual DI in main.go**
+- Go projects wire dependencies manually in `main()` — create each component in order, pass to the next
+- `buildLLMProvider` is extracted as a helper function to keep `run()` clean
+- Environment variable fallback: check config first (`cfg.LLM.Anthropic.APIKey`), then env (`LOGO_LLM_ANTHROPIC_API_KEY`)
+- `switch` on provider name with `default` case for unknown providers — defensive coding

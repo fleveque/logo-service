@@ -15,15 +15,13 @@ import (
 // Each handler gets exactly the dependencies it needs.
 func RegisterRoutes(r *gin.Engine, cfg *config.Config, deps Deps, logger *zap.Logger) {
 	healthHandler := handler.NewHealthHandler()
-	logoHandler := handler.NewLogoHandler(deps.LogoRepo, deps.FileSystem, logger)
-	adminHandler := handler.NewAdminHandler(deps.LogoRepo, deps.LLMCallRepo, deps.GitHubProvider, deps.ImageProcessor, logger)
+	logoHandler := handler.NewLogoHandler(deps.LogoService, logger)
+	adminHandler := handler.NewAdminHandler(deps.LogoRepo, deps.LLMCallRepo, deps.GitHubProvider, deps.LogoService, logger)
 
 	// Public endpoints (no auth)
 	r.GET("/healthz", healthHandler.Healthz)
 
 	// CORS middleware applies to the entire API group.
-	// gin.Group creates a route group sharing a prefix and middleware stack.
-	// Middleware is applied with .Use() — each request passes through them in order.
 	api := r.Group("/api/v1")
 	api.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
 
