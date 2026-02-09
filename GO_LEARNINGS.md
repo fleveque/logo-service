@@ -327,3 +327,36 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - `volumes` persist data across deploys — critical for SQLite DB and cached logos
 - `.kamal/secrets` pulls from env vars on the deploy machine — never hardcoded
 - `builder.arch: arm64` cross-compiles for the Hetzner ARM64 server
+
+---
+
+## Phase 9: Portfolio Integration
+
+**API key in query params for `<img>` tags**
+- Browser `<img src>` can't set HTTP headers — no way to send `X-API-Key`
+- Solution: accept `api_key` as a query parameter alongside the header option
+- The logo-service auth middleware already supports both: `c.GetHeader("X-API-Key")` or `c.Query("api_key")`
+- URL format: `/api/v1/logos/AAPL?size=m&api_key=...`
+
+**Vite build-time secrets**
+- `VITE_*` env vars are baked into the JavaScript bundle at build time (not runtime)
+- In Docker, they're passed via `--mount=type=secret` during `rails assets:precompile`
+- This means the API key is visible in the JS source — acceptable for a self-hosted service behind auth
+- Changing the key requires a full rebuild and redeploy of the frontend
+
+**CORS not needed for `<img>` tags**
+- `<img src>` makes a "simple request" — browsers don't enforce CORS for image loads
+- CORS only applies to `fetch()`/`XMLHttpRequest` — so `<img>` from `quantic.es` loading from `logos.quantic.es` works without any CORS headers
+- The CORS middleware is still useful if the API is called via JavaScript directly
+
+**Bulk import at scale**
+- GitHub repos (`davidepalazzo/ticker-logos` + `nvstly/icons`) combined hold 5000+ ticker logos
+- One-time import: uses Git Trees API (1 request per repo) + CDN downloads for each PNG
+- `raw.githubusercontent.com` is a CDN with no strict rate limits — safe for bulk downloads
+- All logos are cached permanently — subsequent requests never hit GitHub again
+
+**End-to-end deployment flow**
+- Go service: `kamal setup` (first time) or `kamal deploy` (updates)
+- Rails app: set `VITE_LOGO_SERVICE_URL` + `VITE_LOGO_SERVICE_API_KEY` → `kamal deploy`
+- Let's Encrypt certs: kamal-proxy handles automatically, may need `kamal proxy reboot` on first deploy
+- Browser may cache failed TLS handshake — use incognito window to verify new certs
