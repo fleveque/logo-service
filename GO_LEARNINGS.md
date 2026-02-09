@@ -126,3 +126,50 @@ Notes and concepts learned while building the logo-service, phase by phase.
 **`fmt.Sscanf`**
 - Like C's `scanf` — parses formatted strings: `fmt.Sscanf("ff0000", "%02x%02x%02x", &r, &g, &b)`
 - Go inherited several C-isms: `fmt.Sprintf`, `fmt.Fprintf`, `fmt.Sscanf` all follow C format strings
+
+---
+
+## Phase 4: Core API (Handlers, Auth, Rate Limiting, CORS)
+
+**Closures for middleware factories**
+- Middleware constructors return `gin.HandlerFunc` — the outer function captures config in its closure:
+  ```go
+  func APIKeyAuth(validKeys []string) gin.HandlerFunc {
+      keySet := buildSet(validKeys) // captured in closure
+      return func(c *gin.Context) {
+          if _, ok := keySet[key]; !ok { c.Abort() }
+      }
+  }
+  ```
+- The returned function has access to `keySet` even though `APIKeyAuth` has already returned — that's the closure
+
+**`map[string]struct{}` as a Set**
+- Go has no built-in Set type. The idiomatic substitute is `map[string]struct{}`
+- `struct{}` takes zero bytes of memory, so the map only stores keys — perfect for membership checks
+- Check membership with `if _, ok := set[key]; ok { ... }`
+
+**Type assertions**
+- `key.(string)` asserts that an `interface{}` (aka `any`) value is actually a `string`
+- Panics if wrong — use the two-value form `val, ok := key.(string)` for safe assertions
+
+**`sync.Mutex` for shared state**
+- Goroutines sharing a map need synchronization. `sync.Mutex` is simplest:
+  ```go
+  var mu sync.Mutex
+  mu.Lock()
+  limiters[key] = newLimiter
+  mu.Unlock()
+  ```
+- Use mutex for simple shared state; use channels for complex coordination
+
+**`httptest` for handler testing**
+- `httptest.NewRecorder()` captures HTTP responses without a real server
+- `httptest.NewRequest()` creates fake requests — set headers, query params, body
+- Combined with `router.ServeHTTP(w, req)`, you test the full middleware + handler chain in-process
+- Tests run in milliseconds with no network I/O
+
+**Gin route groups**
+- `r.Group("/api/v1")` creates a group with a shared prefix
+- `.Use(middleware)` applies to all routes in the group
+- Groups can be nested: `api.Group("/admin")` adds middleware only for admin routes
+- Curly braces `{ ... }` around routes are cosmetic (scoping convention, not required by Go)
