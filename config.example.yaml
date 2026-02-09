@@ -20,7 +20,11 @@ cors:
     - "https://quantic.cat"
 
 llm:
-  primary_provider: "anthropic"  # or "openai"
+  # Provider order: first is primary, rest are fallbacks.
+  # Swap the order to change which provider is tried first.
+  provider_order:
+    - "anthropic"
+    - "openai"
   anthropic:
     api_key: ""  # or set LOGO_LLM_ANTHROPIC_API_KEY env var
     model: "claude-sonnet-4-5-20250929"

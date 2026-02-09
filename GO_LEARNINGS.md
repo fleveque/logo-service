@@ -211,3 +211,44 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - `go func() { ... }()` in a handler lets you respond immediately (202 Accepted) while work continues
 - Gotcha: don't use `c.Request.Context()` in the goroutine — it gets cancelled when the response is sent
 - Use `context.Background()` for work that should outlive the HTTP request
+
+---
+
+## Phase 6: LLM Integration
+
+**Interface design for provider abstraction**
+- Go interfaces are implicit — any type with matching methods satisfies the interface, no `implements` keyword
+- `llm.Client` interface: `FindLogoURL(ctx, symbol, companyName)`, `ProviderName()`, `ModelName()`
+- Consumers accept the interface (`[]llm.Client`), implementations return concrete types (`*AnthropicClient`)
+- This lets you swap/reorder providers without changing consumer code
+
+**Anthropic SDK (`anthropic-sdk-go`)**
+- SDK uses union types for tool params: `anthropic.ToolUnionParam{OfTool: &tool}` or `{OfWebSearchTool20250305: &param}`
+- Built-in tools (like `web_search`) have dedicated struct types vs custom tools which use `ToolParam`
+- Optional fields use the `param` package: `param.NewOpt("description")` — imported from `github.com/anthropics/anthropic-sdk-go/packages/param`
+- Tool input schemas use `map[string]interface{}` for JSON schema properties
+- Agentic loop pattern: send message → check for tool calls → feed results back → repeat until done
+
+**OpenAI SDK (`go-openai`)**
+- Function calling uses `openai.Tool` with `FunctionDefinition`
+- `Parameters` field is typed as `any` — pass raw `map[string]interface{}` for JSON schema
+- Tool results go back as `ChatMessageRoleTool` messages with the matching `ToolCallID`
+- Similar agentic loop but tool results are individual messages (not batched in a single user message)
+
+**Agentic loop pattern (both providers)**
+- LLMs with tool use need a conversation loop: send → get tool calls → respond → repeat
+- Max turns guard (`for i := 0; i < 5; i++`) prevents runaway API calls
+- Two tool types in our case: web_search (LLM-managed) and submit_logo_url (custom, for structured output)
+- Custom "submit" tool is a pattern to get structured JSON output from an LLM without parsing free text
+
+**Configurable provider order**
+- `provider_order: ["anthropic", "openai"]` in config controls which provider is tried first
+- Go slices preserve order — iterate in order, first success wins, failures fall through
+- Changing priority is a config change, not a code change
+- `rate.Every(time.Minute / time.Duration(ratePerMinute))` converts "calls per minute" to token bucket rate
+
+**SDK type discovery**
+- Go SDK types aren't always obvious from docs — grepping the module cache (`~/go/pkg/mod/`) is effective
+- `grep -r "ToolUnionParam" ~/go/pkg/mod/github.com/anthropics/...` reveals actual struct fields
+- Module cache path uses `@version` suffix: `anthropic-sdk-go@v1.22.0/`
+- Always check the actual Go source, not just API docs — Go SDKs often differ from Python/JS equivalents

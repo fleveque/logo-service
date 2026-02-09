@@ -43,10 +43,12 @@ type CORSConfig struct {
 }
 
 type LLMConfig struct {
-	PrimaryProvider string        `mapstructure:"primary_provider"`
-	Anthropic       AnthropicConfig `mapstructure:"anthropic"`
-	OpenAI          OpenAIConfig    `mapstructure:"openai"`
-	RatePerMinute   int           `mapstructure:"rate_per_minute"`
+	// ProviderOrder controls which LLM providers are used and in what order.
+	// First provider is primary, rest are fallbacks. Example: ["anthropic", "openai"]
+	ProviderOrder []string        `mapstructure:"provider_order"`
+	Anthropic     AnthropicConfig `mapstructure:"anthropic"`
+	OpenAI        OpenAIConfig    `mapstructure:"openai"`
+	RatePerMinute int             `mapstructure:"rate_per_minute"`
 }
 
 type AnthropicConfig struct {
@@ -84,7 +86,7 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("storage.database_path", "./storage/logo-service.db")
 	v.SetDefault("storage.logo_dir", "./storage/logos")
 	v.SetDefault("cors.allowed_origins", []string{"http://localhost:3000", "http://localhost:3036"})
-	v.SetDefault("llm.primary_provider", "anthropic")
+	v.SetDefault("llm.provider_order", []string{"anthropic", "openai"})
 	v.SetDefault("llm.anthropic.model", "claude-sonnet-4-5-20250929")
 	v.SetDefault("llm.openai.model", "gpt-4o")
 	v.SetDefault("llm.rate_per_minute", 10)
