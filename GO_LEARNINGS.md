@@ -173,3 +173,41 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - `.Use(middleware)` applies to all routes in the group
 - Groups can be nested: `api.Group("/admin")` adds middleware only for admin routes
 - Curly braces `{ ... }` around routes are cosmetic (scoping convention, not required by Go)
+
+---
+
+## Phase 5: GitHub Import
+
+**Callback pattern for streaming large datasets**
+- Instead of returning `[]LogoResult` (huge memory), the provider calls a function per item:
+  ```go
+  func BulkImport(ctx context.Context, callback func(*LogoResult) error) (*ImportStats, error)
+  ```
+- The caller decides what to do with each result — process, store, skip, etc.
+- Memory stays constant regardless of dataset size (5000+ logos)
+
+**`io.LimitReader` for safety**
+- `io.ReadAll(io.LimitReader(resp.Body, 10<<20))` caps reads at 10MB
+- Protects against unexpectedly large responses consuming all memory
+- `10<<20` is a Go bit-shift idiom for `10 * 1024 * 1024` (10 megabytes)
+
+**`context.Context` for cancellation**
+- `select { case <-ctx.Done(): return ctx.Err() }` checks for cancellation mid-loop
+- Enables graceful shutdown: Ctrl+C during a 5000-logo import stops cleanly
+- HTTP request contexts auto-cancel when clients disconnect
+
+**Cobra for CLI**
+- Standard Go CLI framework (used by kubectl, docker, hugo)
+- Commands are a tree: `root → import`, each with flags
+- `RunE` variant returns errors (vs `Run` which doesn't) — Cobra prints them automatically
+- Flags use pointer binding: `cmd.Flags().StringVar(&source, "source", "all", "...")`
+
+**JSON decoding from HTTP responses**
+- `json.NewDecoder(resp.Body).Decode(&tree)` streams JSON directly from the response body
+- More memory-efficient than `io.ReadAll` + `json.Unmarshal` for large payloads
+- Go's `encoding/json` uses struct tags: `json:"path"` maps JSON keys to fields
+
+**Background goroutines in HTTP handlers**
+- `go func() { ... }()` in a handler lets you respond immediately (202 Accepted) while work continues
+- Gotcha: don't use `c.Request.Context()` in the goroutine — it gets cancelled when the response is sent
+- Use `context.Background()` for work that should outlive the HTTP request

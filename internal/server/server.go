@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fleveque/logo-service/internal/config"
+	"github.com/fleveque/logo-service/internal/provider"
+	"github.com/fleveque/logo-service/internal/service"
 	"github.com/fleveque/logo-service/internal/storage"
 )
 
@@ -17,9 +19,11 @@ import (
 // many function parameters keeps the constructor clean as dependencies grow.
 // This is called the "functional options" alternative — a simple deps struct.
 type Deps struct {
-	LogoRepo    storage.LogoRepository
-	LLMCallRepo storage.LLMCallRepository
-	FileSystem  *storage.FileSystem
+	LogoRepo       storage.LogoRepository
+	LLMCallRepo    storage.LLMCallRepository
+	FileSystem     *storage.FileSystem
+	GitHubProvider *provider.GitHubProvider
+	ImageProcessor *service.ImageProcessor
 }
 
 // Server wraps the HTTP server and its dependencies.
@@ -34,7 +38,7 @@ type Server struct {
 }
 
 // New creates and configures a new Server.
-func New(cfg *config.Config, logger *zap.Logger, logoRepo storage.LogoRepository, llmCallRepo storage.LLMCallRepository, fs *storage.FileSystem) *Server {
+func New(cfg *config.Config, logger *zap.Logger, logoRepo storage.LogoRepository, llmCallRepo storage.LLMCallRepository, fs *storage.FileSystem, ghProvider *provider.GitHubProvider, processor *service.ImageProcessor) *Server {
 	// Set Gin mode based on log level
 	if cfg.Log.Level == "debug" {
 		gin.SetMode(gin.DebugMode)
@@ -48,9 +52,11 @@ func New(cfg *config.Config, logger *zap.Logger, logoRepo storage.LogoRepository
 	router.Use(gin.Recovery())
 
 	deps := Deps{
-		LogoRepo:    logoRepo,
-		LLMCallRepo: llmCallRepo,
-		FileSystem:  fs,
+		LogoRepo:       logoRepo,
+		LLMCallRepo:    llmCallRepo,
+		FileSystem:     fs,
+		GitHubProvider: ghProvider,
+		ImageProcessor: processor,
 	}
 
 	// Register routes with config, deps, and logger
