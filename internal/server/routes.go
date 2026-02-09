@@ -16,7 +16,7 @@ import (
 func RegisterRoutes(r *gin.Engine, cfg *config.Config, deps Deps, logger *zap.Logger) {
 	healthHandler := handler.NewHealthHandler()
 	logoHandler := handler.NewLogoHandler(deps.LogoRepo, deps.FileSystem, logger)
-	adminHandler := handler.NewAdminHandler(deps.LogoRepo, deps.LLMCallRepo, logger)
+	adminHandler := handler.NewAdminHandler(deps.LogoRepo, deps.LLMCallRepo, deps.GitHubProvider, deps.ImageProcessor, logger)
 
 	// Public endpoints (no auth)
 	r.GET("/healthz", healthHandler.Healthz)

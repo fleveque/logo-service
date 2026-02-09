@@ -15,7 +15,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fleveque/logo-service/internal/config"
+	"github.com/fleveque/logo-service/internal/provider"
 	"github.com/fleveque/logo-service/internal/server"
+	"github.com/fleveque/logo-service/internal/service"
 	"github.com/fleveque/logo-service/internal/storage"
 )
 
@@ -73,6 +75,8 @@ func run() error {
 
 	logoRepo := storage.NewLogoRepository(db)
 	llmCallRepo := storage.NewLLMCallRepository(db)
+	processor := service.NewImageProcessor(fs)
+	ghProvider := provider.NewGitHubProvider(cfg.GitHub.Repos, logger)
 
 	logger.Info("storage initialized",
 		zap.String("database", cfg.Storage.DatabasePath),
@@ -80,7 +84,7 @@ func run() error {
 	)
 
 	// Create and start the HTTP server
-	srv := server.New(cfg, logger, logoRepo, llmCallRepo, fs)
+	srv := server.New(cfg, logger, logoRepo, llmCallRepo, fs, ghProvider, processor)
 
 	// Graceful shutdown: listen for SIGINT (Ctrl+C) or SIGTERM (docker stop).
 	// Channels are Go's primary concurrency primitive — goroutines communicate
