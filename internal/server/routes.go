@@ -3,20 +3,43 @@ package server
 
 import (
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
+	"github.com/fleveque/logo-service/internal/config"
 	"github.com/fleveque/logo-service/internal/handler"
+	"github.com/fleveque/logo-service/internal/middleware"
 )
 
 // RegisterRoutes sets up all HTTP routes on the Gin engine.
-// In Go, we pass dependencies explicitly rather than using DI containers.
-// This function will grow as we add more handlers in later phases.
-func RegisterRoutes(r *gin.Engine) {
+// In Go, we pass dependencies explicitly — no DI container, no magic.
+// Each handler gets exactly the dependencies it needs.
+func RegisterRoutes(r *gin.Engine, cfg *config.Config, deps Deps, logger *zap.Logger) {
 	healthHandler := handler.NewHealthHandler()
+	logoHandler := handler.NewLogoHandler(deps.LogoRepo, deps.FileSystem, logger)
+	adminHandler := handler.NewAdminHandler(deps.LogoRepo, deps.LLMCallRepo, logger)
 
 	// Public endpoints (no auth)
 	r.GET("/healthz", healthHandler.Healthz)
 
-	// API v1 group — auth middleware will be added in Phase 4
-	// gin.Group creates a route group that shares a common prefix and middleware.
-	// _ = r.Group("/api/v1") // will be used in later phases
+	// CORS middleware applies to the entire API group.
+	// gin.Group creates a route group sharing a prefix and middleware stack.
+	// Middleware is applied with .Use() — each request passes through them in order.
+	api := r.Group("/api/v1")
+	api.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
+
+	// Authenticated API endpoints
+	authed := api.Group("")
+	authed.Use(middleware.APIKeyAuth(cfg.Auth.APIKeys))
+	authed.Use(middleware.RateLimit(cfg.RateLimit.RequestsPerSecond, cfg.RateLimit.Burst))
+	{
+		authed.GET("/logos/:symbol", logoHandler.GetLogo)
+	}
+
+	// Admin endpoints (separate auth with admin keys)
+	admin := api.Group("/admin")
+	admin.Use(middleware.AdminKeyAuth(cfg.Auth.AdminKeys))
+	{
+		admin.GET("/stats", adminHandler.Stats)
+		admin.POST("/import", adminHandler.Import)
+	}
 }

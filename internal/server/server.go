@@ -47,16 +47,18 @@ func New(cfg *config.Config, logger *zap.Logger, logoRepo storage.LogoRepository
 	// Recovery middleware catches panics and returns 500 instead of crashing.
 	router.Use(gin.Recovery())
 
-	// Register routes
-	RegisterRoutes(router)
+	deps := Deps{
+		LogoRepo:    logoRepo,
+		LLMCallRepo: llmCallRepo,
+		FileSystem:  fs,
+	}
+
+	// Register routes with config, deps, and logger
+	RegisterRoutes(router, cfg, deps, logger)
 
 	s := &Server{
-		cfg: cfg,
-		deps: Deps{
-			LogoRepo:    logoRepo,
-			LLMCallRepo: llmCallRepo,
-			FileSystem:  fs,
-		},
+		cfg:  cfg,
+		deps: deps,
 		router: router,
 		logger: logger,
 		http: &http.Server{
