@@ -42,6 +42,7 @@ env:
     LOGO_SERVER_PORT: "8080"
     LOGO_STORAGE_DATABASE_PATH: "/app/storage/logo-service.db"
     LOGO_STORAGE_LOGO_DIR: "/app/storage/logos"
+    LOGO_CORS_ALLOWED_ORIGINS: "https://quantic.es,https://quantic.cat,https://pulse.quantic.es,https://beta-pulse.quantic.es,https://beta.quantic.es"
     LOGO_LOG_LEVEL: "info"
 
 # Persistent storage for SQLite database and cached logo PNGs.
