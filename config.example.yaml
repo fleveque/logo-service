@@ -18,6 +18,8 @@ cors:
     - "http://localhost:3036"
     - "https://quantic.es"
     - "https://quantic.cat"
+    - "https://pulse.quantic.es"
+    - "https://beta-pulse.quantic.es"
 
 llm:
   # Provider order: first is primary, rest are fallbacks.
