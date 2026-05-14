@@ -4,6 +4,8 @@ bin/
 
 # Config with secrets
 config.yaml
+.env
+.env.*
 
 # Storage (runtime data)
 storage/logos/
@@ -24,3 +26,6 @@ Thumbs.db
 
 # Go
 vendor/
+
+# direnv
+.envrc
