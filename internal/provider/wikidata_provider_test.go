@@ -67,6 +67,9 @@ func TestWikidataProvider_GetLogo_Success(t *testing.T) {
 	if !strings.Contains(result.OriginalURL, "Diageo") {
 		t.Errorf("OriginalURL should contain the filename: %q", result.OriginalURL)
 	}
+	if !strings.Contains(result.OriginalURL, "width=") {
+		t.Errorf("OriginalURL should ask Wikimedia to rasterize SVG → PNG via width=: %q", result.OriginalURL)
+	}
 	if result.Source != "wikidata:Q161140" {
 		t.Errorf("Source = %q", result.Source)
 	}

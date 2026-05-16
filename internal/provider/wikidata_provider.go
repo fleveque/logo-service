@@ -34,6 +34,12 @@ type WikidataProvider struct {
 const (
 	wikidataAPI = "https://www.wikidata.org/w/api.php"
 	commonsFile = "https://commons.wikimedia.org/wiki/Special:FilePath/"
+	// Wikimedia rasterizes SVGs server-side when you append `?width=`. Asking
+	// for ~512px gives us a PNG large enough to downsize to our biggest output
+	// (xl=256px) without quality loss, but small enough to download fast. This
+	// means our image processor (libvips, compiled without rsvg on Alpine)
+	// only ever sees PNGs from this provider.
+	commonsThumbWidth = 512
 )
 
 func NewWikidataProvider(logger *zap.Logger) *WikidataProvider {
@@ -63,7 +69,10 @@ func (w *WikidataProvider) GetLogo(ctx context.Context, symbol, companyName stri
 		return nil, fmt.Errorf("wikidata P154 for %s: %w", entityID, err)
 	}
 
-	logoURL := commonsFile + url.PathEscape(filename)
+	// Wikimedia gives us a server-rasterized PNG when the file is an SVG and we
+	// append `?width=`. For non-SVG files the query param is ignored and we get
+	// the original. Either way, libvips downstream just sees a raster image.
+	logoURL := fmt.Sprintf("%s%s?width=%d", commonsFile, url.PathEscape(filename), commonsThumbWidth)
 	data, err := w.downloadImage(ctx, logoURL)
 	if err != nil {
 		return nil, fmt.Errorf("downloading %s: %w", logoURL, err)
