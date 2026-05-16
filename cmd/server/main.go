@@ -161,6 +161,16 @@ func buildLLMProvider(cfg *config.Config, llmCallRepo storage.LLMCallRepository,
 				logger.Info("LLM provider added", zap.String("provider", "openai"), zap.String("model", cfg.LLM.OpenAI.Model))
 			}
 
+		case "gemini":
+			apiKey := cfg.LLM.Gemini.APIKey
+			if apiKey == "" {
+				apiKey = os.Getenv("LOGO_LLM_GEMINI_API_KEY")
+			}
+			if apiKey != "" {
+				clients = append(clients, llm.NewGeminiClient(apiKey, cfg.LLM.Gemini.Model))
+				logger.Info("LLM provider added", zap.String("provider", "gemini"), zap.String("model", cfg.LLM.Gemini.Model))
+			}
+
 		default:
 			logger.Warn("unknown LLM provider in config, skipping", zap.String("provider", name))
 		}

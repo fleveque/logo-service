@@ -34,6 +34,9 @@ func NewLogoHandler(logoService *service.LogoService, logger *zap.Logger) *LogoH
 // GitHub repos or via LLM web search, processes it, and caches it.
 func (h *LogoHandler) GetLogo(c *gin.Context) {
 	symbol := strings.ToUpper(c.Param("symbol"))
+	// Optional hint — only used if we fall through to the LLM layer for a non-US
+	// ticker the model wouldn't recognise from the ticker alone (REP.MC, DGE.L).
+	companyName := c.Query("company_name")
 
 	// Validate size parameter
 	sizeStr := c.DefaultQuery("size", "m")
@@ -46,7 +49,7 @@ func (h *LogoHandler) GetLogo(c *gin.Context) {
 	size := model.LogoSize(sizeStr)
 
 	// GetLogo handles the full pipeline: cache → GitHub → LLM → process
-	data, err := h.logoService.GetLogo(c.Request.Context(), symbol, size)
+	data, err := h.logoService.GetLogo(c.Request.Context(), symbol, companyName, size)
 	if err != nil {
 		h.logger.Warn("logo not found",
 			zap.String("symbol", symbol),
