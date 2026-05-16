@@ -105,54 +105,92 @@ type wbSearchResponse struct {
 	} `json:"search"`
 }
 
-// Common corporate suffixes — we try these *after* a normalized search fails, so
-// names like "REPSOL,  S.A." (caps, double whitespace, suffix) collapse to a
-// query Wikidata can match. Order matters: longer suffixes first so we don't
-// accidentally peel off "Inc" when the real suffix is "Inc.".
-var corporateSuffixes = []string{
-	", S.A.", " S.A.", ", S.A", " S.A",
-	", Inc.", " Inc.", ", Inc", " Inc",
-	", N.V.", " N.V.", ", NV", " NV",
-	" Corporation", " Corp.", " Corp",
-	" Limited", " Ltd.", " Ltd",
-	" plc", " PLC", " p.l.c.",
-	" GmbH", " AG", " SE", " S.E.",
-	" Co., Ltd.", " Co.", " & Co.",
+// Lowercased corporate-form tokens we look for inside the company name. Yahoo
+// often hands us not just the company name but the full security descriptor
+// ("DIAGEO PLC ORD 28 101/108P"), so we can't rely on the form being a trailing
+// suffix — we find it as a word and truncate everything after it.
+var corporateForms = []string{
+	"plc", "p.l.c.",
+	"inc", "inc.",
+	"sa", "s.a", "s.a.",
+	"ltd", "ltd.", "limited",
+	"corp", "corp.", "corporation",
+	"ag",
+	"gmbh",
+	"nv", "n.v", "n.v.",
+	"se", "s.e.",
+	"co", "co.",
 }
 
 func normalizeWhitespace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func stripCorporateSuffix(name string) string {
-	for _, suffix := range corporateSuffixes {
-		if strings.HasSuffix(name, suffix) {
-			return strings.TrimSpace(strings.TrimSuffix(name, suffix))
+// companyNameVariants returns search-friendly variants of a raw company name
+// in decreasing order of fidelity, e.g. for "DIAGEO PLC ORD 28 101/108P":
+//
+//	["DIAGEO PLC ORD 28 101/108P", "DIAGEO PLC", "DIAGEO"]
+//
+// Wikidata's fuzzy search picks up the right entity from the bare name even
+// when the descriptive cruft drowns it out in the as-is form.
+func companyNameVariants(name string) []string {
+	normalized := normalizeWhitespace(name)
+	variants := []string{normalized}
+
+	words := strings.Fields(normalized)
+	for i, word := range words {
+		token := strings.ToLower(strings.TrimRight(word, ".,"))
+		if !isCorporateForm(token) {
+			continue
 		}
+
+		// "<name…> <CorpForm>" — drop trailing security-descriptor cruft.
+		withForm := strings.Join(words[:i+1], " ")
+		if withForm != normalized {
+			variants = append(variants, withForm)
+		}
+
+		// "<name…>" — drop the corporate form too. Also trim trailing
+		// punctuation that often sits between the name and the form,
+		// e.g. "REPSOL," → "REPSOL".
+		if i > 0 {
+			bare := strings.TrimRight(strings.Join(words[:i], " "), ",")
+			if bare != "" && bare != withForm {
+				variants = append(variants, bare)
+			}
+		}
+		break // first match wins; further tokens are inside the descriptor
 	}
-	return name
+
+	return variants
 }
 
-// searchEntity tries the normalized name first; if Wikidata returns no hits,
-// it falls back to a suffix-stripped variant. Two queries worst case — cheap
-// against Wikidata's free API and dramatically improves coverage for names
-// pulled from Yahoo (which often arrive as "REPSOL,  S.A." or "Diageo plc").
+func isCorporateForm(token string) bool {
+	for _, f := range corporateForms {
+		if token == f {
+			return true
+		}
+	}
+	return false
+}
+
+// searchEntity tries each variant of the company name in order, stopping at
+// the first hit. At most 3 queries per call (raw → with-form → bare), all
+// against Wikidata's free API.
 func (w *WikidataProvider) searchEntity(ctx context.Context, name string) (string, error) {
-	normalized := normalizeWhitespace(name)
-	if id, err := w.searchOnce(ctx, normalized); err == nil {
-		return id, nil
+	variants := companyNameVariants(name)
+
+	for _, v := range variants {
+		if v == "" {
+			continue
+		}
+		if id, err := w.searchOnce(ctx, v); err == nil {
+			return id, nil
+		}
 	}
 
-	stripped := stripCorporateSuffix(normalized)
-	if stripped == "" || stripped == normalized {
-		return "", fmt.Errorf("no wikidata entity for %q", normalized)
-	}
-
-	id, err := w.searchOnce(ctx, stripped)
-	if err != nil {
-		return "", fmt.Errorf("no wikidata entity for %q or %q", normalized, stripped)
-	}
-	return id, nil
+	return "", fmt.Errorf("no wikidata entity for any variant of %q (tried %d: %v)",
+		variants[0], len(variants), variants)
 }
 
 func (w *WikidataProvider) searchOnce(ctx context.Context, query string) (string, error) {
