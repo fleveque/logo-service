@@ -25,31 +25,34 @@ import (
 // in Go services — check the fast path (local cache), fall back to slower
 // external calls only when needed.
 type LogoService struct {
-	logoRepo    storage.LogoRepository
-	fs          *storage.FileSystem
-	processor   *ImageProcessor
-	ghProvider  *provider.GitHubProvider
-	llmProvider *provider.LLMProvider // nil if no LLM keys configured
-	logger      *zap.Logger
+	logoRepo         storage.LogoRepository
+	fs               *storage.FileSystem
+	processor        *ImageProcessor
+	ghProvider       *provider.GitHubProvider
+	wikidataProvider *provider.WikidataProvider // nil to skip the wikidata layer
+	llmProvider      *provider.LLMProvider      // nil if no LLM keys configured
+	logger           *zap.Logger
 }
 
 // NewLogoService creates a service with all acquisition layers wired up.
-// llmProvider can be nil — the service gracefully skips LLM if unconfigured.
+// wikidataProvider and llmProvider can be nil — the service skips any nil layer.
 func NewLogoService(
 	logoRepo storage.LogoRepository,
 	fs *storage.FileSystem,
 	processor *ImageProcessor,
 	ghProvider *provider.GitHubProvider,
+	wikidataProvider *provider.WikidataProvider,
 	llmProvider *provider.LLMProvider,
 	logger *zap.Logger,
 ) *LogoService {
 	return &LogoService{
-		logoRepo:    logoRepo,
-		fs:          fs,
-		processor:   processor,
-		ghProvider:  ghProvider,
-		llmProvider: llmProvider,
-		logger:      logger,
+		logoRepo:         logoRepo,
+		fs:               fs,
+		processor:        processor,
+		ghProvider:       ghProvider,
+		wikidataProvider: wikidataProvider,
+		llmProvider:      llmProvider,
+		logger:           logger,
 	}
 }
 
@@ -113,7 +116,9 @@ func (s *LogoService) fromCache(ctx context.Context, symbol string, size model.L
 	return s.fs.Read(symbol, size)
 }
 
-// acquire tries providers in order: GitHub first (free, fast), then LLM (paid, slow).
+// acquire walks the provider chain in order: GitHub (fast, US-only repos) →
+// Wikidata (deterministic, needs company name) → LLM (slow, generic). The
+// first one to return a logo wins.
 func (s *LogoService) acquire(ctx context.Context, symbol, companyName string) (*provider.LogoResult, error) {
 	// Layer 2: GitHub repos
 	result, err := s.ghProvider.GetLogo(ctx, symbol)
@@ -128,6 +133,23 @@ func (s *LogoService) acquire(ctx context.Context, symbol, companyName string) (
 		zap.String("symbol", symbol),
 		zap.Error(err),
 	)
+
+	// Layer 2.5: Wikidata → Wikimedia Commons. Deterministic; skipped if no
+	// company name (LLM is the fallback for that case).
+	if s.wikidataProvider != nil {
+		result, err = s.wikidataProvider.GetLogo(ctx, symbol, companyName)
+		if err == nil {
+			s.logger.Info("found logo via Wikidata",
+				zap.String("symbol", symbol),
+				zap.String("source", result.Source),
+			)
+			return result, nil
+		}
+		s.logger.Debug("wikidata provider miss",
+			zap.String("symbol", symbol),
+			zap.Error(err),
+		)
+	}
 
 	// Layer 3: LLM web search
 	if s.llmProvider != nil {
