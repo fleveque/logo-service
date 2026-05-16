@@ -96,7 +96,9 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("llm.provider_order", []string{"gemini", "anthropic", "openai"})
 	v.SetDefault("llm.anthropic.model", "claude-sonnet-4-5-20250929")
 	v.SetDefault("llm.openai.model", "gpt-4o")
-	v.SetDefault("llm.gemini.model", "gemini-2.5-flash")
+	// flash-lite gets 1000 free req/day vs flash's 20 — and Wikidata covers
+	// the major-company case now, so LLM is mostly a long-tail fallback.
+	v.SetDefault("llm.gemini.model", "gemini-2.5-flash-lite")
 	v.SetDefault("llm.rate_per_minute", 10)
 	v.SetDefault("github.repos", []string{
 		"davidepalazzo/ticker-logos",
