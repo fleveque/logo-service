@@ -29,6 +29,14 @@ func NewImageProcessor(fs *storage.FileSystem) *ImageProcessor {
 // Go note: returning a map lets the caller know which sizes succeeded.
 // We process all sizes even if some fail, collecting errors along the way.
 func (p *ImageProcessor) ProcessAll(symbol string, imageData []byte) (map[model.LogoSize]bool, error) {
+	// Magic-byte gate: reject obviously-wrong inputs (HTML returned by a bad
+	// LLM URL, SVG that would hang libvips) BEFORE handing to bimg. Without
+	// this, the resize loop spends ~6s per size on a bad input before giving
+	// up — enough to trip kamal-proxy's request timeout.
+	if err := validateImageFormat(imageData); err != nil {
+		return nil, fmt.Errorf("input rejected: %w", err)
+	}
+
 	results := make(map[model.LogoSize]bool)
 	var errs []string
 
