@@ -26,60 +26,111 @@ func newGeminiTestServer(t *testing.T, status int, responseBody string) *httptes
 	}))
 }
 
-func TestGeminiClient_FindLogoURL_Success(t *testing.T) {
-	payload := `{"candidates":[{"content":{"parts":[{"text":"{\"logo_url\":\"https://example.com/repsol.png\",\"company_name\":\"Repsol, S.A.\",\"source\":\"wikipedia.org\",\"confidence\":\"high\"}"}]}}]}`
-	srv := newGeminiTestServer(t, http.StatusOK, payload)
-	defer srv.Close()
-
+func newGeminiClientWithServer(srv *httptest.Server) *GeminiClient {
 	client := &GeminiClient{
 		httpClient: srv.Client(),
 		apiKey:     "test-key",
 		model:      "gemini-2.5-flash",
 	}
-	// Override the URL by hijacking the transport (Gemini URL is hardcoded).
-	// We swap the entire HTTP client so the URL doesn't matter — the test server's
-	// handler answers any request.
 	client.httpClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		// Forward every request to our test server, preserving body so request shape can be inspected.
 		req.URL.Scheme = "http"
 		req.URL.Host = strings.TrimPrefix(srv.URL, "http://")
 		return http.DefaultTransport.RoundTrip(req)
 	})
+	return client
+}
+
+func TestGeminiClient_FindLogoURL_Success(t *testing.T) {
+	// Grounded text response with the tagged wrapper.
+	text := "I searched and found Repsol's logo on Wikipedia.\n\n<LOGO_URL>https://upload.wikimedia.org/repsol.png</LOGO_URL>\n<SOURCE>https://en.wikipedia.org/wiki/Repsol</SOURCE>"
+	payload, _ := json.Marshal(map[string]any{
+		"candidates": []map[string]any{
+			{"content": map[string]any{
+				"parts": []map[string]any{{"text": text}},
+			}},
+		},
+	})
+	srv := newGeminiTestServer(t, http.StatusOK, string(payload))
+	defer srv.Close()
+
+	client := newGeminiClientWithServer(srv)
 
 	result, err := client.FindLogoURL(context.Background(), "REP.MC", "Repsol, S.A.")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.LogoURL != "https://example.com/repsol.png" {
-		t.Errorf("LogoURL = %q, want https://example.com/repsol.png", result.LogoURL)
+	if result.LogoURL != "https://upload.wikimedia.org/repsol.png" {
+		t.Errorf("LogoURL = %q", result.LogoURL)
 	}
 	if result.CompanyName != "Repsol, S.A." {
-		t.Errorf("CompanyName = %q, want Repsol, S.A.", result.CompanyName)
+		t.Errorf("CompanyName = %q", result.CompanyName)
 	}
-	if result.Confidence != "high" {
-		t.Errorf("Confidence = %q, want high", result.Confidence)
+	if result.Source != "https://en.wikipedia.org/wiki/Repsol" {
+		t.Errorf("Source = %q", result.Source)
 	}
 }
 
-func TestGeminiClient_FindLogoURL_EmptyURL(t *testing.T) {
-	payload := `{"candidates":[{"content":{"parts":[{"text":"{\"logo_url\":\"\",\"company_name\":\"Unknown\",\"confidence\":\"low\"}"}]}}]}`
-	srv := newGeminiTestServer(t, http.StatusOK, payload)
+func TestGeminiClient_FindLogoURL_MultiplePartsConcatenated(t *testing.T) {
+	// Grounded responses often split text across multiple parts.
+	payload, _ := json.Marshal(map[string]any{
+		"candidates": []map[string]any{
+			{"content": map[string]any{
+				"parts": []map[string]any{
+					{"text": "Searching..."},
+					{"text": "Found it: <LOGO_URL>https://example.com/x.svg</LOGO_URL>"},
+				},
+			}},
+		},
+	})
+	srv := newGeminiTestServer(t, http.StatusOK, string(payload))
 	defer srv.Close()
 
-	client := &GeminiClient{
-		httpClient: srv.Client(),
-		apiKey:     "test-key",
-		model:      "gemini-2.5-flash",
-	}
-	client.httpClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = strings.TrimPrefix(srv.URL, "http://")
-		return http.DefaultTransport.RoundTrip(req)
-	})
+	client := newGeminiClientWithServer(srv)
 
+	result, err := client.FindLogoURL(context.Background(), "AAPL", "Apple")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.LogoURL != "https://example.com/x.svg" {
+		t.Errorf("LogoURL = %q", result.LogoURL)
+	}
+}
+
+func TestGeminiClient_FindLogoURL_EmptyTag(t *testing.T) {
+	// Model returned the "couldn't find" sentinel.
+	payload, _ := json.Marshal(map[string]any{
+		"candidates": []map[string]any{
+			{"content": map[string]any{
+				"parts": []map[string]any{{"text": "No reliable logo found.\n<LOGO_URL></LOGO_URL>"}},
+			}},
+		},
+	})
+	srv := newGeminiTestServer(t, http.StatusOK, string(payload))
+	defer srv.Close()
+
+	client := newGeminiClientWithServer(srv)
 	_, err := client.FindLogoURL(context.Background(), "XYZ", "")
 	if err == nil {
-		t.Fatal("expected error for empty logo URL, got nil")
+		t.Fatal("expected error for empty <LOGO_URL>, got nil")
+	}
+}
+
+func TestGeminiClient_FindLogoURL_MissingTag(t *testing.T) {
+	// Model went off-script and didn't emit the wrapper at all.
+	payload, _ := json.Marshal(map[string]any{
+		"candidates": []map[string]any{
+			{"content": map[string]any{
+				"parts": []map[string]any{{"text": "Sure! The logo is at https://example.com/x.png"}},
+			}},
+		},
+	})
+	srv := newGeminiTestServer(t, http.StatusOK, string(payload))
+	defer srv.Close()
+
+	client := newGeminiClientWithServer(srv)
+	_, err := client.FindLogoURL(context.Background(), "ABC", "")
+	if err == nil {
+		t.Fatal("expected error for missing <LOGO_URL> tag, got nil")
 	}
 }
 
@@ -87,70 +138,61 @@ func TestGeminiClient_FindLogoURL_HTTPError(t *testing.T) {
 	srv := newGeminiTestServer(t, http.StatusInternalServerError, `{"error":"boom"}`)
 	defer srv.Close()
 
-	client := &GeminiClient{
-		httpClient: srv.Client(),
-		apiKey:     "test-key",
-		model:      "gemini-2.5-flash",
-	}
-	client.httpClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = strings.TrimPrefix(srv.URL, "http://")
-		return http.DefaultTransport.RoundTrip(req)
-	})
-
+	client := newGeminiClientWithServer(srv)
 	_, err := client.FindLogoURL(context.Background(), "AAPL", "Apple")
 	if err == nil {
 		t.Fatal("expected error for HTTP 500, got nil")
 	}
 }
 
-func TestBuildPrompt_IncludesCompanyName(t *testing.T) {
-	prompt := buildPrompt("REP.MC", "Repsol, S.A.")
+func TestBuildGeminiGroundedPrompt_IncludesCompanyName(t *testing.T) {
+	prompt := buildGeminiGroundedPrompt("REP.MC", "Repsol, S.A.")
 	if !strings.Contains(prompt, "Repsol, S.A.") {
 		t.Errorf("prompt missing company name hint: %s", prompt)
 	}
+	if !strings.Contains(prompt, "<LOGO_URL>") {
+		t.Errorf("prompt missing tag spec: %s", prompt)
+	}
 }
 
-func TestBuildPrompt_OmitsHintWhenNoName(t *testing.T) {
-	prompt := buildPrompt("AAPL", "")
+func TestBuildGeminiGroundedPrompt_OmitsHintWhenNoName(t *testing.T) {
+	prompt := buildGeminiGroundedPrompt("AAPL", "")
 	if strings.Contains(prompt, "company name:") {
 		t.Errorf("prompt should not include hint when name empty: %s", prompt)
 	}
 }
 
-// Ensures the request body shape is what Gemini expects (responseSchema present).
+// Request body must include the google_search tool and NOT include responseSchema
+// (they're mutually exclusive in Gemini).
 func TestGeminiClient_RequestShape(t *testing.T) {
 	var captured map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &captured)
-		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"{\"logo_url\":\"https://x/y.png\",\"company_name\":\"X\",\"confidence\":\"high\"}"}]}}]}`)
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"<LOGO_URL>https://x/y.png</LOGO_URL>"}]}}]}`)
 	}))
 	defer srv.Close()
 
-	client := &GeminiClient{
-		httpClient: srv.Client(),
-		apiKey:     "k",
-		model:      "gemini-2.5-flash",
-	}
-	client.httpClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = strings.TrimPrefix(srv.URL, "http://")
-		return http.DefaultTransport.RoundTrip(req)
-	})
-
+	client := newGeminiClientWithServer(srv)
 	if _, err := client.FindLogoURL(context.Background(), "AAPL", "Apple"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	gc, ok := captured["generationConfig"].(map[string]any)
-	if !ok {
-		t.Fatal("missing generationConfig in request")
+	tools, ok := captured["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		t.Fatal("request missing tools array")
 	}
-	if gc["responseMimeType"] != "application/json" {
-		t.Errorf("responseMimeType = %v, want application/json", gc["responseMimeType"])
+	tool, _ := tools[0].(map[string]any)
+	if _, hasSearch := tool["google_search"]; !hasSearch {
+		t.Errorf("first tool is not google_search: %v", tool)
 	}
-	if _, ok := gc["responseSchema"]; !ok {
-		t.Error("responseSchema missing from request")
+
+	if gc, ok := captured["generationConfig"].(map[string]any); ok {
+		if _, hasSchema := gc["responseSchema"]; hasSchema {
+			t.Error("generationConfig must not include responseSchema (incompatible with google_search)")
+		}
+		if _, hasMime := gc["responseMimeType"]; hasMime {
+			t.Error("generationConfig must not include responseMimeType (incompatible with google_search)")
+		}
 	}
 }

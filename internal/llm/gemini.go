@@ -7,15 +7,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 )
 
-// GeminiClient implements the Client interface using Google's Gemini API.
-// We use raw HTTP rather than a vendored SDK to keep the dependency
-// footprint small — the request shape is simple and unlikely to churn.
-// Structured output is via `responseSchema` (Gemini's native equivalent
-// of Anthropic/OpenAI tool calling), so we get clean JSON back without
-// an agentic loop.
+// GeminiClient implements the Client interface using Google's Gemini API
+// with Google Search grounding enabled. Without grounding the model
+// happily fabricates plausible-looking URLs (e.g. invented Wikipedia
+// Commons hash prefixes) which then 404 on download. Grounding forces
+// the response to cite URLs the model actually saw via search.
+//
+// Note: Gemini's API does not allow `responseSchema` together with the
+// `google_search` tool — they're mutually exclusive. We therefore parse
+// a tagged `<LOGO_URL>...</LOGO_URL>` wrapper out of the free-text
+// response rather than relying on structured output.
 type GeminiClient struct {
 	httpClient *http.Client
 	apiKey     string
@@ -23,6 +29,11 @@ type GeminiClient struct {
 }
 
 const geminiAPIURLFormat = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
+
+var (
+	logoURLRegex = regexp.MustCompile(`<LOGO_URL>\s*(\S+?)\s*</LOGO_URL>`)
+	sourceRegex  = regexp.MustCompile(`<SOURCE>\s*(\S+?)\s*</SOURCE>`)
+)
 
 // NewGeminiClient creates a Gemini-powered logo finder.
 func NewGeminiClient(apiKey, model string) *GeminiClient {
@@ -37,29 +48,18 @@ func (g *GeminiClient) ProviderName() string { return "gemini" }
 func (g *GeminiClient) ModelName() string    { return g.model }
 
 func (g *GeminiClient) FindLogoURL(ctx context.Context, symbol, companyName string) (*LogoSearchResult, error) {
-	prompt := buildPrompt(symbol, companyName)
+	prompt := buildGeminiGroundedPrompt(symbol, companyName)
 
 	body := map[string]any{
 		"contents": []map[string]any{
 			{"parts": []map[string]any{{"text": prompt}}},
 		},
+		"tools": []map[string]any{
+			{"google_search": map[string]any{}},
+		},
 		"generationConfig": map[string]any{
-			"responseMimeType": "application/json",
-			"responseSchema": map[string]any{
-				"type": "OBJECT",
-				"properties": map[string]any{
-					"logo_url":     map[string]any{"type": "STRING"},
-					"company_name": map[string]any{"type": "STRING"},
-					"source":       map[string]any{"type": "STRING"},
-					"confidence": map[string]any{
-						"type": "STRING",
-						"enum": []string{"high", "medium", "low"},
-					},
-				},
-				"required": []string{"logo_url", "company_name", "confidence"},
-			},
 			"temperature":     0.2,
-			"maxOutputTokens": 1024,
+			"maxOutputTokens": 2048,
 		},
 	}
 
@@ -107,19 +107,73 @@ func (g *GeminiClient) FindLogoURL(ctx context.Context, symbol, companyName stri
 		return nil, fmt.Errorf("gemini returned no content for %s", symbol)
 	}
 
-	var result submitLogoResult
-	if err := json.Unmarshal([]byte(apiResp.Candidates[0].Content.Parts[0].Text), &result); err != nil {
-		return nil, fmt.Errorf("parsing gemini structured output: %w", err)
+	// Concatenate every text part — grounded responses can split text across multiple
+	// parts when interleaved with search results.
+	var sb strings.Builder
+	for _, part := range apiResp.Candidates[0].Content.Parts {
+		sb.WriteString(part.Text)
 	}
+	text := sb.String()
 
-	if result.LogoURL == "" {
-		return nil, fmt.Errorf("gemini did not find a logo URL for %s", symbol)
+	logoURL := extractTagged(logoURLRegex, text)
+	if logoURL == "" {
+		return nil, fmt.Errorf("gemini did not return a tagged logo URL for %s; raw response: %q", symbol, truncate(text, 200))
 	}
+	source := extractTagged(sourceRegex, text)
 
 	return &LogoSearchResult{
-		LogoURL:     result.LogoURL,
-		CompanyName: result.CompanyName,
-		Source:      result.Source,
-		Confidence:  result.Confidence,
+		LogoURL:     logoURL,
+		CompanyName: companyName,
+		Source:      source,
+		Confidence:  "grounded",
 	}, nil
+}
+
+func extractTagged(re *regexp.Regexp, text string) string {
+	m := re.FindStringSubmatch(text)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// buildGeminiGroundedPrompt is Gemini-specific because the contract is different
+// from the JSON-schema variant used by Anthropic / OpenAI clients: we ask for a
+// tagged free-text response since `google_search` and `responseSchema` can't
+// coexist in the same Gemini call.
+func buildGeminiGroundedPrompt(symbol, companyName string) string {
+	hint := ""
+	if companyName != "" {
+		hint = fmt.Sprintf(" (company name: %s)", companyName)
+	}
+
+	return fmt.Sprintf(`Find the official company logo for stock ticker "%s"%s.
+
+Use Google Search to locate a DIRECT image URL for the company's official logo. Only return a URL you actually saw in the search results — do not guess or construct URLs from patterns you remember.
+
+Prefer (in order):
+1. Wikipedia / Wikimedia Commons file pages — copy the actual file URL from the page
+2. The company's own website (look for /favicon.png, brand assets, press kit pages)
+3. Reputable financial data sites (Yahoo Finance, Google Finance)
+
+Requirements:
+- Must be a DIRECT link to an image file (URL ends in .png, .svg, .jpg, .jpeg, or .webp)
+- Must be publicly accessible (no auth, no paywall)
+- Must be the company's primary logo, not a product or sub-brand variant
+
+Output format: after any reasoning, end your response with these two tags on their own lines:
+
+<LOGO_URL>the direct image URL you found</LOGO_URL>
+<SOURCE>the page where you found it</SOURCE>
+
+If you cannot find a logo URL that meets all the requirements, output:
+
+<LOGO_URL></LOGO_URL>`, symbol, hint)
 }
