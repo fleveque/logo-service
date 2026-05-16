@@ -145,8 +145,12 @@ func (s *LogoService) acquire(ctx context.Context, symbol, companyName string) (
 			)
 			return result, nil
 		}
-		s.logger.Debug("wikidata provider miss",
+		// Info (not Debug) so we can see in production whether Wikidata was
+		// even reachable for a given ticker and why it bailed (missing
+		// company_name vs no Q-entity vs no P154 vs download fail).
+		s.logger.Info("wikidata provider miss",
 			zap.String("symbol", symbol),
+			zap.String("company_name", companyName),
 			zap.Error(err),
 		)
 	}

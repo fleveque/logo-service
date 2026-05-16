@@ -30,7 +30,7 @@ llm:
     - "openai"
   gemini:
     api_key: ""  # or set LOGO_LLM_GEMINI_API_KEY env var
-    model: "gemini-2.5-flash"  # free tier — 15 req/min
+    model: "gemini-2.5-flash-lite"  # free tier — 1000 req/day vs flash's 20/day
   anthropic:
     api_key: ""  # or set LOGO_LLM_ANTHROPIC_API_KEY env var
     model: "claude-sonnet-4-5-20250929"
