@@ -45,10 +45,11 @@ type CORSConfig struct {
 
 type LLMConfig struct {
 	// ProviderOrder controls which LLM providers are used and in what order.
-	// First provider is primary, rest are fallbacks. Example: ["anthropic", "openai"]
+	// First provider is primary, rest are fallbacks. Example: ["gemini", "anthropic", "openai"]
 	ProviderOrder []string        `mapstructure:"provider_order"`
 	Anthropic     AnthropicConfig `mapstructure:"anthropic"`
 	OpenAI        OpenAIConfig    `mapstructure:"openai"`
+	Gemini        GeminiConfig    `mapstructure:"gemini"`
 	RatePerMinute int             `mapstructure:"rate_per_minute"`
 }
 
@@ -58,6 +59,11 @@ type AnthropicConfig struct {
 }
 
 type OpenAIConfig struct {
+	APIKey string `mapstructure:"api_key"`
+	Model  string `mapstructure:"model"`
+}
+
+type GeminiConfig struct {
 	APIKey string `mapstructure:"api_key"`
 	Model  string `mapstructure:"model"`
 }
@@ -87,9 +93,10 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("storage.database_path", "./storage/logo-service.db")
 	v.SetDefault("storage.logo_dir", "./storage/logos")
 	v.SetDefault("cors.allowed_origins", []string{"http://localhost:3000", "http://localhost:3036"})
-	v.SetDefault("llm.provider_order", []string{"anthropic", "openai"})
+	v.SetDefault("llm.provider_order", []string{"gemini", "anthropic", "openai"})
 	v.SetDefault("llm.anthropic.model", "claude-sonnet-4-5-20250929")
 	v.SetDefault("llm.openai.model", "gpt-4o")
+	v.SetDefault("llm.gemini.model", "gemini-2.5-flash")
 	v.SetDefault("llm.rate_per_minute", 10)
 	v.SetDefault("github.repos", []string{
 		"davidepalazzo/ticker-logos",
