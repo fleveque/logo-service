@@ -327,6 +327,7 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - `volumes` persist data across deploys — critical for SQLite DB and cached logos
 - `.kamal/secrets` pulls from env vars on the deploy machine — never hardcoded
 - `builder.arch: arm64` cross-compiles for the Hetzner ARM64 server
+- `.github/workflows/deploy.yml` runs `kamal deploy` automatically after CI passes on `main` — chains via `workflow_run` so it only fires when tests are green. Kamal is a Ruby gem, so the deploy job installs Ruby + `gem install kamal` even though this is a Go project
 
 ---
 
@@ -356,7 +357,7 @@ Notes and concepts learned while building the logo-service, phase by phase.
 - All logos are cached permanently — subsequent requests never hit GitHub again
 
 **End-to-end deployment flow**
-- Go service: `kamal setup` (first time) or `kamal deploy` (updates)
-- Rails app: set `VITE_LOGO_SERVICE_URL` + `VITE_LOGO_SERVICE_API_KEY` → `kamal deploy`
+- Go service: `kamal setup` (first time) or merge to `main` (auto-deploys via the GitHub Action). Manual override: `mise exec ruby@3.4.1 -- kamal deploy`
+- Rails app: set `VITE_LOGO_SERVICE_URL` + `VITE_LOGO_SERVICE_API_KEY` → merge to `main`
 - Let's Encrypt certs: kamal-proxy handles automatically, may need `kamal proxy reboot` on first deploy
 - Browser may cache failed TLS handshake — use incognito window to verify new certs
