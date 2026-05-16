@@ -39,7 +39,10 @@ FROM alpine:3.21
 # vips: image processing runtime (libvips)
 # ca-certificates: for HTTPS calls to GitHub API and LLM providers
 # tzdata: timezone data for proper timestamps
-RUN apk add --no-cache vips ca-certificates tzdata
+# sqlite: CLI for ad-hoc inspection / cache cleanup via `kamal app exec`
+#         (the binary uses go-sqlite3, which doesn't need the CLI to run —
+#         this is purely for operator convenience)
+RUN apk add --no-cache vips ca-certificates tzdata sqlite
 
 # Run as non-root user for security — same pattern as the dividend-portfolio Dockerfile.
 RUN addgroup -S app && adduser -S -G app app
