@@ -148,6 +148,14 @@ func truncate(s string, n int) string {
 // from the JSON-schema variant used by Anthropic / OpenAI clients: we ask for a
 // tagged free-text response since `google_search` and `responseSchema` can't
 // coexist in the same Gemini call.
+//
+// The prompt deliberately steers the model AWAY from Wikipedia/Wikimedia
+// (those URLs have an MD5-derived hash prefix the model can't reliably
+// reproduce — see production hallucinations like
+// `upload.wikimedia.org/.../1/12/Repsol_logo.svg` 404'ing) and TOWARD the
+// company's own domain, where logo URLs are stable patterns the model can
+// actually verify via grounded search results. Wikipedia coverage is already
+// handled deterministically by the Wikidata provider that runs first.
 func buildGeminiGroundedPrompt(symbol, companyName string) string {
 	hint := ""
 	if companyName != "" {
@@ -156,24 +164,33 @@ func buildGeminiGroundedPrompt(symbol, companyName string) string {
 
 	return fmt.Sprintf(`Find the official company logo for stock ticker "%s"%s.
 
-Use Google Search to locate a DIRECT image URL for the company's official logo. Only return a URL you actually saw in the search results — do not guess or construct URLs from patterns you remember.
+Use Google Search to locate a DIRECT image URL on the COMPANY'S OWN WEBSITE that serves an image file.
 
-Prefer (in order):
-1. Wikipedia / Wikimedia Commons file pages — copy the actual file URL from the page
-2. The company's own website (look for /favicon.png, brand assets, press kit pages)
-3. Reputable financial data sites (Yahoo Finance, Google Finance)
+PREFERRED sources (in order):
+1. The company's primary domain (e.g. https://www.repsol.com/.../logo.png)
+2. A CDN subdomain owned by the company (e.g. https://cdn.diageo.com/...)
+3. The company's press kit, brand assets, or media-resources pages
+4. Investor-relations pages on the company's domain
 
-Requirements:
-- Must be a DIRECT link to an image file (URL ends in .png, .svg, .jpg, .jpeg, or .webp)
-- Must be publicly accessible (no auth, no paywall)
-- Must be the company's primary logo, not a product or sub-brand variant
+AVOID these — they're common failure modes:
+- upload.wikimedia.org URLs — the hash-prefix path (e.g. /commons/X/YY/) is rarely guessed correctly. Skip Wikimedia entirely; we already cover that path separately.
+- en.wikipedia.org/wiki/File:... — those are HTML pages, not file URLs.
+- /thumb/ paths on Wikimedia — they often 400 without a proper Referer.
+- Stock-exchange "logo" endpoints (e.g. londonstockexchange.com/images/logos/...) — most don't actually serve logos.
+- URLs you constructed from a pattern but haven't actually seen in a real search result.
 
-Output format: after any reasoning, end your response with these two tags on their own lines:
+Requirements for the URL:
+- Must be PNG, JPEG, or WebP (NOT SVG — our pipeline doesn't process SVG).
+- The host should be the company's own domain or its CDN.
+- Must be publicly accessible — no auth, no paywall, no Referer requirement.
+- Must be the company's primary corporate logo, not a product or sub-brand variant.
+
+Output format: end your response with these two tags on their own lines:
 
 <LOGO_URL>the direct image URL you found</LOGO_URL>
-<SOURCE>the page where you found it</SOURCE>
+<SOURCE>the page on the company's site where you found it</SOURCE>
 
-If you cannot find a logo URL that meets all the requirements, output:
+If you cannot find a URL on the company's own domain that meets ALL the requirements, output:
 
 <LOGO_URL></LOGO_URL>`, symbol, hint)
 }
