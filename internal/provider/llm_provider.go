@@ -58,7 +58,9 @@ func NewLLMProvider(
 func (p *LLMProvider) Name() string { return "llm" }
 
 // GetLogo asks LLM providers (in configured order) to find a logo URL, then downloads it.
-func (p *LLMProvider) GetLogo(ctx context.Context, symbol string) (*LogoResult, error) {
+// companyName is an optional hint passed straight to the LLM prompt — disambiguates
+// exchange-suffixed tickers (REP.MC → Repsol) the model might not recognise.
+func (p *LLMProvider) GetLogo(ctx context.Context, symbol, companyName string) (*LogoResult, error) {
 	if len(p.clients) == 0 {
 		return nil, fmt.Errorf("no LLM providers configured")
 	}
@@ -72,7 +74,7 @@ func (p *LLMProvider) GetLogo(ctx context.Context, symbol string) (*LogoResult, 
 			return nil, fmt.Errorf("rate limit wait: %w", err)
 		}
 
-		result, err := p.tryProvider(ctx, client, symbol)
+		result, err := p.tryProvider(ctx, client, symbol, companyName)
 		if err == nil {
 			return result, nil
 		}
@@ -97,14 +99,14 @@ func (p *LLMProvider) BulkImport(_ context.Context, _ func(result *LogoResult) e
 	return &ImportStats{}, fmt.Errorf("LLM provider does not support bulk import")
 }
 
-func (p *LLMProvider) tryProvider(ctx context.Context, client llm.Client, symbol string) (*LogoResult, error) {
+func (p *LLMProvider) tryProvider(ctx context.Context, client llm.Client, symbol, companyName string) (*LogoResult, error) {
 	if client == nil {
 		return nil, fmt.Errorf("LLM client not configured")
 	}
 
 	start := time.Now()
 
-	searchResult, err := client.FindLogoURL(ctx, symbol, "")
+	searchResult, err := client.FindLogoURL(ctx, symbol, companyName)
 	duration := time.Since(start).Milliseconds()
 
 	// Record the LLM call for cost tracking

@@ -59,7 +59,11 @@ func NewLogoService(
 //  2. If not cached, acquire from providers (GitHub → LLM)
 //  3. Process to all sizes, store in cache
 //  4. Return the requested size
-func (s *LogoService) GetLogo(ctx context.Context, symbol string, size model.LogoSize) ([]byte, error) {
+// companyName is an optional hint used only when we fall through to the LLM
+// layer — it lets the model disambiguate exchange-suffixed tickers (REP.MC →
+// Repsol) it might not recognise from training data alone. Cache key remains
+// `symbol` only; the hint never changes a cached result.
+func (s *LogoService) GetLogo(ctx context.Context, symbol, companyName string, size model.LogoSize) ([]byte, error) {
 	// Layer 1: Cache hit — fast path
 	data, err := s.fromCache(ctx, symbol, size)
 	if err == nil {
@@ -71,7 +75,7 @@ func (s *LogoService) GetLogo(ctx context.Context, symbol string, size model.Log
 		zap.String("symbol", symbol),
 	)
 
-	result, err := s.acquire(ctx, symbol)
+	result, err := s.acquire(ctx, symbol, companyName)
 	if err != nil {
 		return nil, fmt.Errorf("acquiring logo for %s: %w", symbol, err)
 	}
@@ -110,7 +114,7 @@ func (s *LogoService) fromCache(ctx context.Context, symbol string, size model.L
 }
 
 // acquire tries providers in order: GitHub first (free, fast), then LLM (paid, slow).
-func (s *LogoService) acquire(ctx context.Context, symbol string) (*provider.LogoResult, error) {
+func (s *LogoService) acquire(ctx context.Context, symbol, companyName string) (*provider.LogoResult, error) {
 	// Layer 2: GitHub repos
 	result, err := s.ghProvider.GetLogo(ctx, symbol)
 	if err == nil {
@@ -127,7 +131,7 @@ func (s *LogoService) acquire(ctx context.Context, symbol string) (*provider.Log
 
 	// Layer 3: LLM web search
 	if s.llmProvider != nil {
-		result, err = s.llmProvider.GetLogo(ctx, symbol)
+		result, err = s.llmProvider.GetLogo(ctx, symbol, companyName)
 		if err == nil {
 			s.logger.Info("found logo via LLM",
 				zap.String("symbol", symbol),
