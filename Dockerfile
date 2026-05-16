@@ -37,12 +37,16 @@ FROM alpine:3.21
 
 # Install only the runtime libraries (not dev headers).
 # vips: image processing runtime (libvips)
+# librsvg: SVG rasterization backend for libvips — without it, libvips falls
+#          back to a much slower SVG path. Resizing a single Wikimedia logo to
+#          all five sizes takes ~30s without librsvg vs ~100ms with it, which
+#          was tripping kamal-proxy's request timeout.
 # ca-certificates: for HTTPS calls to GitHub API and LLM providers
 # tzdata: timezone data for proper timestamps
 # sqlite: CLI for ad-hoc inspection / cache cleanup via `kamal app exec`
 #         (the binary uses go-sqlite3, which doesn't need the CLI to run —
 #         this is purely for operator convenience)
-RUN apk add --no-cache vips ca-certificates tzdata sqlite
+RUN apk add --no-cache vips librsvg ca-certificates tzdata sqlite
 
 # Run as non-root user for security — same pattern as the dividend-portfolio Dockerfile.
 RUN addgroup -S app && adduser -S -G app app
