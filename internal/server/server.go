@@ -19,13 +19,14 @@ import (
 // many function parameters keeps the constructor clean as dependencies grow.
 // This is called the "functional options" alternative — a simple deps struct.
 type Deps struct {
-	LogoRepo       storage.LogoRepository
-	LLMCallRepo    storage.LLMCallRepository
-	FileSystem     *storage.FileSystem
-	GitHubProvider *provider.GitHubProvider
-	LLMProvider    *provider.LLMProvider // nil if no LLM keys configured
-	ImageProcessor *service.ImageProcessor
-	LogoService    *service.LogoService
+	LogoRepo         storage.LogoRepository
+	LLMCallRepo      storage.LLMCallRepository
+	FileSystem       *storage.FileSystem
+	GitHubProvider   *provider.GitHubProvider
+	WikidataProvider *provider.WikidataProvider
+	LLMProvider      *provider.LLMProvider // nil if no LLM keys configured
+	ImageProcessor   *service.ImageProcessor
+	LogoService      *service.LogoService
 }
 
 // Server wraps the HTTP server and its dependencies.
@@ -62,11 +63,14 @@ func New(cfg *config.Config, logger *zap.Logger, deps Deps) *Server {
 		router: router,
 		logger: logger,
 		http: &http.Server{
-			Addr:         cfg.Server.Address(),
-			Handler:      router,
+			Addr:    cfg.Server.Address(),
+			Handler: router,
+			// Wide write timeout: a cold logo lookup may chain Wikidata (~1s)
+			// + Wikimedia download + Gemini grounded search (10–30s). At 30s
+			// we were cancelling requests mid-LLM and returning 504 upstream.
 			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 30 * time.Second,
-			IdleTimeout:  60 * time.Second,
+			WriteTimeout: 60 * time.Second,
+			IdleTimeout:  120 * time.Second,
 		},
 	}
 

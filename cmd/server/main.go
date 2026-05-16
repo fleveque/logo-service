@@ -71,13 +71,14 @@ func run() error {
 	llmCallRepo := storage.NewLLMCallRepository(db)
 	processor := service.NewImageProcessor(fs)
 	ghProvider := provider.NewGitHubProvider(cfg.GitHub.Repos, logger)
+	wikidataProvider := provider.NewWikidataProvider(logger)
 
 	// Build LLM clients in the configured order.
 	// Only clients with API keys are created — missing keys mean that provider is skipped.
 	llmProvider := buildLLMProvider(cfg, llmCallRepo, logger)
 
-	// LogoService is the core orchestrator: cache → GitHub → LLM
-	logoService := service.NewLogoService(logoRepo, fs, processor, ghProvider, llmProvider, logger)
+	// LogoService is the core orchestrator: cache → GitHub → Wikidata → LLM
+	logoService := service.NewLogoService(logoRepo, fs, processor, ghProvider, wikidataProvider, llmProvider, logger)
 
 	logger.Info("storage initialized",
 		zap.String("database", cfg.Storage.DatabasePath),
@@ -94,13 +95,14 @@ func run() error {
 
 	// Create and start the HTTP server
 	deps := server.Deps{
-		LogoRepo:       logoRepo,
-		LLMCallRepo:    llmCallRepo,
-		FileSystem:     fs,
-		GitHubProvider: ghProvider,
-		LLMProvider:    llmProvider,
-		ImageProcessor: processor,
-		LogoService:    logoService,
+		LogoRepo:         logoRepo,
+		LLMCallRepo:      llmCallRepo,
+		FileSystem:       fs,
+		GitHubProvider:   ghProvider,
+		WikidataProvider: wikidataProvider,
+		LLMProvider:      llmProvider,
+		ImageProcessor:   processor,
+		LogoService:      logoService,
 	}
 	srv := server.New(cfg, logger, deps)
 
