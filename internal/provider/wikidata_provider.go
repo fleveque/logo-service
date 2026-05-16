@@ -96,10 +96,60 @@ type wbSearchResponse struct {
 	} `json:"search"`
 }
 
+// Common corporate suffixes — we try these *after* a normalized search fails, so
+// names like "REPSOL,  S.A." (caps, double whitespace, suffix) collapse to a
+// query Wikidata can match. Order matters: longer suffixes first so we don't
+// accidentally peel off "Inc" when the real suffix is "Inc.".
+var corporateSuffixes = []string{
+	", S.A.", " S.A.", ", S.A", " S.A",
+	", Inc.", " Inc.", ", Inc", " Inc",
+	", N.V.", " N.V.", ", NV", " NV",
+	" Corporation", " Corp.", " Corp",
+	" Limited", " Ltd.", " Ltd",
+	" plc", " PLC", " p.l.c.",
+	" GmbH", " AG", " SE", " S.E.",
+	" Co., Ltd.", " Co.", " & Co.",
+}
+
+func normalizeWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func stripCorporateSuffix(name string) string {
+	for _, suffix := range corporateSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return strings.TrimSpace(strings.TrimSuffix(name, suffix))
+		}
+	}
+	return name
+}
+
+// searchEntity tries the normalized name first; if Wikidata returns no hits,
+// it falls back to a suffix-stripped variant. Two queries worst case — cheap
+// against Wikidata's free API and dramatically improves coverage for names
+// pulled from Yahoo (which often arrive as "REPSOL,  S.A." or "Diageo plc").
 func (w *WikidataProvider) searchEntity(ctx context.Context, name string) (string, error) {
+	normalized := normalizeWhitespace(name)
+	if id, err := w.searchOnce(ctx, normalized); err == nil {
+		return id, nil
+	}
+
+	stripped := stripCorporateSuffix(normalized)
+	if stripped == "" || stripped == normalized {
+		return "", fmt.Errorf("no wikidata entity for %q", normalized)
+	}
+
+	id, err := w.searchOnce(ctx, stripped)
+	if err != nil {
+		return "", fmt.Errorf("no wikidata entity for %q or %q", normalized, stripped)
+	}
+	return id, nil
+}
+
+func (w *WikidataProvider) searchOnce(ctx context.Context, query string) (string, error) {
 	q := url.Values{
 		"action":   {"wbsearchentities"},
-		"search":   {name},
+		"search":   {query},
 		"language": {"en"},
 		"limit":    {"1"},
 		"format":   {"json"},
@@ -114,7 +164,7 @@ func (w *WikidataProvider) searchEntity(ctx context.Context, name string) (strin
 		return "", fmt.Errorf("decoding search response: %w", err)
 	}
 	if len(resp.Search) == 0 {
-		return "", fmt.Errorf("no wikidata entity for %q", name)
+		return "", fmt.Errorf("no entity")
 	}
 	return resp.Search[0].ID, nil
 }
