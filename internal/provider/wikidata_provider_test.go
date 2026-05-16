@@ -168,20 +168,40 @@ func TestNormalizeWhitespace(t *testing.T) {
 	}
 }
 
-func TestStripCorporateSuffix(t *testing.T) {
-	cases := map[string]string{
-		"Repsol, S.A.":      "Repsol",
-		"Diageo plc":        "Diageo",
-		"Apple Inc.":        "Apple",
-		"Iberdrola, S.A.":   "Iberdrola",
-		"Toyota Motor Corp": "Toyota Motor",
-		"Just a Name":       "Just a Name", // no suffix → unchanged
+func TestCompanyNameVariants(t *testing.T) {
+	cases := map[string][]string{
+		// Whitespace + trailing corp form: variants = original, then bare name.
+		"REPSOL,  S.A.": {"REPSOL, S.A.", "REPSOL"},
+		// Trailing plc: original then bare.
+		"Diageo plc": {"Diageo plc", "Diageo"},
+		// Yahoo descriptor noise after the corp form — must truncate to "with form"
+		// AND "bare".
+		"DIAGEO PLC ORD 28 101/108P": {"DIAGEO PLC ORD 28 101/108P", "DIAGEO PLC", "DIAGEO"},
+		// Multi-word name with trailing form: same shape.
+		"Toyota Motor Corporation": {"Toyota Motor Corporation", "Toyota Motor"},
+		// Inc.
+		"Apple Inc.": {"Apple Inc.", "Apple"},
+		// No corp form anywhere: just the normalized name.
+		"Berkshire Hathaway": {"Berkshire Hathaway"},
 	}
 	for input, want := range cases {
-		if got := stripCorporateSuffix(input); got != want {
-			t.Errorf("stripCorporateSuffix(%q) = %q, want %q", input, got, want)
+		got := companyNameVariants(input)
+		if !equalSlices(got, want) {
+			t.Errorf("companyNameVariants(%q) = %v, want %v", input, got, want)
 		}
 	}
+}
+
+func equalSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Whitespace-only difference: the as-is search succeeds, no fallback needed.
@@ -220,8 +240,8 @@ func TestWikidataProvider_GetLogo_RecoversFromDoubleSpace(t *testing.T) {
 	}
 }
 
-// First (normalized) search misses, suffix-stripped retry hits.
-func TestWikidataProvider_GetLogo_RecoversBySuffixStrip(t *testing.T) {
+// First (normalized) search misses, bare-name retry hits.
+func TestWikidataProvider_GetLogo_RecoversByStrippingCorpForm(t *testing.T) {
 	searches := []string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -229,7 +249,7 @@ func TestWikidataProvider_GetLogo_RecoversBySuffixStrip(t *testing.T) {
 		case "wbsearchentities":
 			search := q.Get("search")
 			searches = append(searches, search)
-			// First search: as-is (still fails). Second: stripped, hits.
+			// First search (as-is): miss. Second (bare): hit.
 			if len(searches) == 1 {
 				_, _ = io.WriteString(w, `{"search":[]}`)
 			} else {
@@ -252,13 +272,53 @@ func TestWikidataProvider_GetLogo_RecoversBySuffixStrip(t *testing.T) {
 		t.Errorf("Source = %q", result.Source)
 	}
 	if len(searches) != 2 {
-		t.Fatalf("expected 2 search calls (normalized + stripped), got %d: %v", len(searches), searches)
+		t.Fatalf("expected 2 search calls (as-is + bare), got %d: %v", len(searches), searches)
 	}
 	if !strings.Contains(searches[0], "Inc.") {
-		t.Errorf("first search should be the as-is normalized form: %q", searches[0])
+		t.Errorf("first search should keep the corp form: %q", searches[0])
 	}
 	if strings.Contains(searches[1], "Inc.") {
-		t.Errorf("second search should have suffix stripped: %q", searches[1])
+		t.Errorf("second search should drop the corp form: %q", searches[1])
+	}
+}
+
+// Yahoo-style descriptor noise — variants must include the truncated form so
+// Wikidata can find Diageo when handed "DIAGEO PLC ORD 28 101/108P".
+func TestWikidataProvider_GetLogo_HandlesYahooSecurityDescriptor(t *testing.T) {
+	searches := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch q.Get("action") {
+		case "wbsearchentities":
+			search := q.Get("search")
+			searches = append(searches, search)
+			// First two miss (raw + truncated-with-form), third hits ("DIAGEO").
+			if len(searches) <= 2 {
+				_, _ = io.WriteString(w, `{"search":[]}`)
+			} else {
+				_, _ = io.WriteString(w, `{"search":[{"id":"Q161140"}]}`)
+			}
+		case "wbgetclaims":
+			_, _ = io.WriteString(w, `{"claims":{"P154":[{"mainsnak":{"datavalue":{"value":"Diageo logo.svg"}}}]}}`)
+		default:
+			_, _ = io.WriteString(w, "PNGDATA")
+		}
+	}))
+	defer srv.Close()
+
+	p := newWikidataProviderWithServer(srv)
+	result, err := p.GetLogo(context.Background(), "DGE.L", "DIAGEO PLC ORD 28 101/108P")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Source != "wikidata:Q161140" {
+		t.Errorf("Source = %q", result.Source)
+	}
+	if len(searches) != 3 {
+		t.Fatalf("expected 3 search calls (raw → with-form → bare), got %d: %v", len(searches), searches)
+	}
+	if searches[len(searches)-1] != "DIAGEO" {
+		t.Errorf("final search should be the bare name, got %q", searches[len(searches)-1])
 	}
 }
 
